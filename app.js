@@ -30,6 +30,7 @@ class Boundary {
 	}
 }
 
+// Basic entity class for testing quadtree
 class Entity {
 	constructor(x, y, width, height) {
 		this.bound = Boundary.FromXYSize(x, y, width, height);
@@ -57,6 +58,7 @@ class QuadTreeSector {
 		this._newEntities = [];
 	}
 
+	// Creates 4 new sectors based on a parent sector
 	static newQuad(parent) {
 		let bound = parent.bound;
 		let halfWidth = bound.width / 2;
@@ -71,6 +73,7 @@ class QuadTreeSector {
 		];
 	}
 
+	// Check if this sector is directly before the last sectors in terms of depth
 	isPenultimate() {
 		// Tests if any child sectors have child sectors of their own
 		for(let child of this.sectors)
@@ -87,6 +90,7 @@ class QuadTreeSector {
 		return this.entities;
 	}
 
+	// Get all entities below and in this sector
 	allEntities() {
 		return [...this.sectors.map(a => a.allEntities()).flat(), ...this.entities];
 	}
