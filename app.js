@@ -22,6 +22,11 @@ class Boundary {
 				&& this.miny < boundary.miny && this.maxy > boundary.maxy;
 	}
 
+	intersects(boundary) {
+		return this.minx < boundary.maxx && this.maxx > boundary.minx
+				&& this.miny < boundary.maxy && this.maxy > boundary.miny;
+	}
+
 	update(x, y, width = this.width, height = this.height) {
 		this.minx = x;
 		this.miny = y;
@@ -34,6 +39,7 @@ class Boundary {
 class Entity {
 	constructor(x, y, width, height) {
 		this.bound = Boundary.FromXYSize(x, y, width, height);
+		this.nodes = [];
 	}
 
 	update(x, y) {
@@ -41,24 +47,22 @@ class Entity {
 	}
 }
 
-class QuadTreeSector {
+class QuadTreeNode {
 	constructor(parent, x, y, width, height) {
 		this.bound = Boundary.FromXYSize(x, y, width, height);
 
 		let parentNotRoot = parent.hasOwnProperty('root');
 
-		// Save references to parent sector and root quadtree
+		// Save references to parent node and root quadtree
 		this.parent = parentNotRoot ? parent:undefined;
 		this.root = parentNotRoot ? parent.root:parent;
 		this.depth = parentNotRoot ? parent.depth + 1:0;
 
 		this.entities = [];
-		this.sectors = [];
-
-		this._newEntities = [];
+		this.nodes = [];
 	}
 
-	// Creates 4 new sectors based on a parent sector
+	// Creates 4 new nodes based on a parent node
 	static newQuad(parent) {
 		let bound = parent.bound;
 		let halfWidth = bound.width / 2;
@@ -66,286 +70,321 @@ class QuadTreeSector {
 
 		// TL, TR, BL, BR
 		return [
-			new QuadTreeSector(parent, bound.minx, bound.miny, halfWidth, halfHeight),
-			new QuadTreeSector(parent, bound.minx + halfWidth, bound.miny, halfWidth, halfHeight),
-			new QuadTreeSector(parent, bound.minx, bound.miny + halfHeight, halfWidth, halfHeight),
-			new QuadTreeSector(parent, bound.minx + halfWidth, bound.miny + halfHeight, halfWidth, halfHeight),
+			new QuadTreeNode(parent, bound.minx, bound.miny, halfWidth, halfHeight),
+			new QuadTreeNode(parent, bound.minx + halfWidth, bound.miny, halfWidth, halfHeight),
+			new QuadTreeNode(parent, bound.minx, bound.miny + halfHeight, halfWidth, halfHeight),
+			new QuadTreeNode(parent, bound.minx + halfWidth, bound.miny + halfHeight, halfWidth, halfHeight),
 		];
 	}
 
-	// Check if this sector is directly before the last sectors in terms of depth
-	isPenultimate() {
-		// Tests if any child sectors have child sectors of their own
-		for(let child of this.sectors)
-			if(child.sectors.length) return false;
+	// Check if this node is a leaf node
+	isLeaf() {
+		return !this.nodes.length;
+	}
 
-		// No child sectors found; this sector is penultimate to the bottom-most sector
+	// Check if this node is directly before the very last nodes in terms of depth
+	isPenultimate() {
+		if(this.isLeaf()) return false;
+
+		// Tests if any child nodes have child nodes of their own
+		for(let child of this.nodes)
+			if(child.nodes.length) return false;
+
+		// No grandchild nodes found; this node is penultimate
 		return true;
 	}
 
-	// Go up the branch and get all entities along the way
-	branchEntities() {
-		if(this.parent) return [...this.parent.branchEntities(), ...this.entities];
+	// Debuging function
+	mapit(offset = this.depth) {
+		let vertLines = '|'.repeat(this.depth + 1 - offset);
+		let entitySignatures = this.entities
+			.map(a => a.nodes.map(b => b.depth).join(','))
+			.join(' ');
+		let recurse = this.nodes.map(a => a.mapit(offset)).join('');
+		let entityData = this.isLeaf() ?
+			`${this.entities.length}[${entitySignatures}]`:
+			this.entities.length ? `bad ${this.entities.length}`:'good';
 
-		return this.entities;
-	}
-
-	// Get all entities below and in this sector
-	allEntities() {
-		return [...this.sectors.map(a => a.allEntities()).flat(), ...this.entities];
+		return `${vertLines}-- ${entityData}\n` + recurse;
 	}
 
 	update() {
-		this.recalculateEntities();
+		// Collapsing happens from leaves to root using this method, making sure entire branches
+		// are collapsed properly
+		this.nodes.forEach(child => child.update());
+
 		this.collapse();
 
-		// Update children
-		for(let child of this.sectors) child.update();
+		this.flagged = false;
 	}
 
-	// Load many entities
-	load(entities, bypass = false) {
-		// using .add() is more optimised than using .load() for a single entity
-		if(entities.length == 1) {
-			this.add(entities[0]);
-			return;
-		}
-
-		let rejects = [];
-		let potentialEntities = [];
-
-		// Add entities to this sector
-		for(let entity of entities) {
-			// Test if the given entity fits in this quadtree sector
-			if(this.bound.contains(entity.bound))
-				potentialEntities.push(entity);
-			else rejects.push(entity);
-		}
-
-		// Divide this sector
-		if(!this.sectors.length && this.depth < this.root.maxDepth && this.entities.length + potentialEntities.length > this.root.maxSize)
-			this.divide();
+	add(entity, bypass = false) {
+		if(!bypass && !this.bound.contains(entity.bound)) return entity;
 		
-		// Move entities into child sectors
-		if(this.sectors.length) {
-			entityLoop:
-			for(let entity of potentialEntities) {
-				// Test if the given entity fits in each child quadtree sector
-				for(let child of this.sectors) {
-					if(child.bound.contains(entity.bound)) {
-						// _newEntities is a cache for entities to be later added all at once via .load()
-						child._newEntities.push(entity);
+		if(this.isLeaf()) {
+			// Add entity to quadtree list
+			if(!bypass) this.root.entities.push(entity);
+			// Add entity to this node
+			this.entities.push(entity);
 
-						continue entityLoop;
-					}
-				}
+			entity.nodes = [this];
 
-				// If no child sector is viable, insert into this sector instead
-				this.entities.push(entity);
-			}
-
-			// Load viable entities into child sectors
-			for(let child of this.sectors) {
-				if(child._newEntities.length) {
-					child.load(child._newEntities);
-					child._newEntities.length = 0;
-				}
+			// If this node is full, divide it into 4 and move all entities into child nodes
+			if(this.depth < this.root.maxDepth && this.entities.length > this.root.maxSize) {
+				this.divide();
+				this.moveEntitiesDown();
 			}
 		}
-		// If there is no potential overfill, simply put all entities into this sector
-		else
-			this.entities.push(...potentialEntities);
+		else {
+			// If this node has children, insert into those instead
+			for(let child of this.nodes)
+				if(!child.add(entity)) return;
 
-		// Rejects contain entities that cannot fit into this quadtree sector, but were included in the entities list
-		return rejects;
+			// If no child nodes can fully contain the entity, find all nodes that intersect
+			// the entity and add the entity to each
+			entity.nodes = this.allIntersections(entity);
+
+			for(let node of entity.nodes)
+				node.addIntersecting(entity);
+
+			// Add entity to quadtree list
+			if(!bypass) this.root.entities.push(entity);
+		}
 	}
 
-	// Add a single entity
-	add(entity, force = false) {
-		// Reject entity if it does not fit inside of this sector
-		if(!force && !this.bound.contains(entity.bound)) return entity;
+	// This function is an abstraction of .add(), it is used when many of the checks in .add() are
+	// already known such as when adding to only intersecting nodes
+	addIntersecting(entity) {
+		this.entities.push(entity);
 
-		// Divide this sector
-		if(!this.sectors.length && this.depth < this.root.maxDepth && this.entities.length + 1 > this.root.maxSize) {
+		// If this node is full, divide it into 4 and move all entities into child nodes
+		if(this.depth < this.root.maxDepth && this.entities.length > this.root.maxSize) {
 			this.divide();
 			this.moveEntitiesDown();
 		}
-
-		// Test if the given entity fits in each child quadtree sector
-		for(let child of this.sectors) {
-			// If the child was successfully added into the child sector, return from the function
-			if(!child.add(entity)) return;
-		}
-
-		this.entities.push(entity);
 	}
 
-	// When a new entity added via .add() causes a sector to have to divide, the existing entities
-	// must be moved to child sectors for optimum packing
+	// Remove an entity from this node
+	remove(entity) {
+		let index = this.entities.indexOf(entity);
+		if(index != -1) this.entities.splice(index, 1);
+	}
+
+	// Gets every leaf node that intersects with the given entity
+	allIntersections(entity) {
+		if(!this.nodes.length)
+			return [this];
+
+		let returnArray = [];
+
+		for(let child of this.nodes) {
+			if(child.bound.intersects(entity.bound))
+				returnArray.push(child.allIntersections(entity));
+		}
+
+		return returnArray.flat();
+	}
+
+	// Used to move all of a nodes' entities into its children nodes
 	moveEntitiesDown() {
-		let removalCache = [];
-
+		// Loop backwards because of splice
 		entityLoop:
-		for(let entity of this.entities) {
-			// Test if this entity can be added to child sectors
-			for(let child of this.sectors) {
-				if(child.bound.contains(entity.bound)) {
-					// Add to removal cache
-					removalCache.push(entity);
+		for(let i = this.entities.length - 1; i >= 0; i--) {
+			let entity = this.entities[i];
 
-					// Force add to child sector
+			// Find viable child nodes to insert entity into
+			for(let child of this.nodes) {
+				if(child.bound.contains(entity.bound)) {
+					this.remove(entity);
+
 					child.add(entity, true);
 
-					break;
+					continue entityLoop;
 				}
 			}
-		}
 
-		// Remove entities from current sector (.filter can be used here, but it is slightly slower than this impl.)
-		for(let i = 0; i < removalCache.length; i++)
-			this.entities.splice(this.entities.indexOf(removalCache[i]), 1);
+			// When no child nodes are found, remove node from list and add all
+			// intersecting child nodes
+			entity.nodes.splice(entity.nodes.indexOf(this), 1);
+			let newNodes = this.allIntersections(entity);
+			entity.nodes.push(...newNodes);
+			
+			// Add entity to all new nodes
+			for(let node of newNodes)
+				node.addIntersecting(entity);
+
+			this.remove(entity);
+		}
 	}
 
-	// Check this entity for movement and move it to the correct node
-	recalculateEntities() {
-		let outOfBounds = [];
-
-		let sectorCache = [];
-		let loadCache = [];
-		let removalCache = [];
-
-		entityLoop:
-		for(let entity of this.entities) {
-			// Do not need to recalculate the position of a static entity
-			if(entity.bound.static) continue;
-
-			// Test if entity is still encapsulated inside of this sector
-			if(this.bound.contains(entity.bound)) {
-				// Test if this entity can be added to child sectors
-				for(let child of this.sectors) {
-					if(child.bound.contains(entity.bound)) {
-						let cacheIndex = sectorCache.indexOf(child);
-
-						// Cache entity to sector
-						if(cacheIndex != -1) {
-							loadCache[cacheIndex].push(entity);
-						}
-						else {
-							sectorCache.push(child);
-							loadCache.push([entity]);
-						}
-
-						// Add to removal cache
-						removalCache.push(entity);
-
-						continue entityLoop;
-					}
-				}
-			}
-			else {
-				// Remove entity from current sector
-				this.entities.splice(this.entities.indexOf(entity), 1);
-
-				// Travel up the branch of sectors and see if any sectors can contain this entity
-				let upwardSector = this;
-				while(upwardSector.parent !== undefined) {
-					upwardSector = upwardSector.parent;
-
-					// If a sector is found to be able to contain this entity, cache it to that sector
-					if(upwardSector.bound.contains(entity.bound)) {
-						let cacheIndex = sectorCache.indexOf(upwardSector);
-
-						// Add sector and entity to cache
-						if(cacheIndex != -1) {
-							loadCache[cacheIndex].push(entity);
-						}
-						else {
-							sectorCache.push(upwardSector);
-							loadCache.push([entity]);
-						}
-
-						continue entityLoop;
-					}
-				}
-
-				outOfBounds.push(entity);
-			}
-		}
-
-		// Load each list of cached entities into each cached sector
-		for(let i = 0; i < sectorCache.length; i++)
-			sectorCache[i].load(loadCache[i]);
-
-		// Remove entities from current sector (.filter can be used here, but it is slightly slower than this impl.)
-		for(let i = 0; i < removalCache.length; i++)
-			this.entities.splice(this.entities.indexOf(removalCache[i]), 1);
-
-		// Return any entities that are no longer a part of the quadtree due to being out of bounds
-		return outOfBounds;
-	}
-
-	// Giver this sector 4 child sectors
+	// Divide the node into 4
 	divide() {
-		this.sectors = QuadTreeSector.newQuad(this);
+		this.nodes = QuadTreeNode.newQuad(this);
 	}
 
 	// Opposite of .divide()
 	collapse() {
+		// Only nodes that are directly before leaves should collapse
 		if(!this.isPenultimate()) return;
 
-		// Sum up all entities (Eqiv. to: this.sectors.reduce((s, a) => s = a.entities.length, this.entities.length), but more readable)
-		let totalEntities = this.entities.length;
-		for(let child of this.sectors) totalEntities += child.entities.length;
-
-		// If this sector can contain all child entities, remove all children sectors
-		if(totalEntities <= this.root.maxSize) {
-			// Using .insert() is not required here because it is already known that every entity
-			// from each child node fits inside of this parent node
-			for(let child of this.sectors)
-				this.entities.push(...child.entities);
-
-			this.sectors.length = 0;
+		// Sum up all unique entities
+		let totalEntities = new Set();
+		let test = 0;
+		for(let child of this.nodes) {
+			for(let entity of child.entities) {
+				totalEntities.add(entity);
+				test ++;
+			}
 		}
 
+		// TODO: Fix collapse and divide issues
+		// It divides without any reason to, and doesn't collapse when it should
+		console.log(totalEntities.size, test);
+
+		// If this node can contain all child entities, collapse
+		if(totalEntities.size <= this.root.maxSize) {
+			let nodes = Array.from(this.nodes);
+			this.nodes.length = 0;
+
+			// Move all child entities to proper locations
+			for(let child of nodes) {
+				for(let entity of child.entities) {
+					// // Remove entity from all of its previous nodes (they get recalculated directly
+					// // after this)
+					// entity.nodes.forEach(node => node.remove(entity));
+
+					// If an entity only has 1 node, that means the node fully contains it, which
+					// allows also means that the node's parent also fully contains it and it can
+					// simply be added into the parent node
+					if(entity.nodes.length == 1)
+						this.add(entity, true);
+					else
+						this.root.recalculateNodes(entity);
+				}
+			}
+		}
 	}
 }
 
-// TODO: Add line-intersecting entities to multiple sectors instead of just 1 
 class QuadTree {
 	constructor(x, y, width, height) {
-		this.bound = Boundary.FromXYSize(x, y, width, height);
 		this.maxSize = 5;
 		this.maxDepth = 5;
 
-		// Top most quadtree level only has 1 rectangle
-		this.sector = new QuadTreeSector(this, x, y, width, height);
+		this.entities = [];
+		this.outOfBounds = [];
+
+		this.node = new QuadTreeNode(this, x, y, width, height);
 	}
 
+	get bound() {
+		return this.node.bound;
+	}
+
+	// Updates the quadtree and recalculate for moving entities
 	update() {
-		this.sector.update();
+		// Attempt to re-add out-of-bounds entities
+		for(let i = this.outOfBounds.length - 1; i >= 0; i--) {
+			if(!this.add(this.outOfBounds[i]))
+				this.outOfBounds.splice(i, 1);
+		}
+
+		// Backwards loop because of .splice
+		for(let i = this.entities.length - 1; i >= 0; i--) {
+			let entity = this.entities[i];
+
+			// If an entity is only part of 1 node, that means it is fully contained by that node.
+			// This allows for the assumption that if it remains contained by that node, no further
+			// calculations are required
+			if(entity.nodes.length == 1) {
+				if(entity.nodes[0].bound.contains(entity.bound)) continue;
+
+				// Remove entity from node
+				entity.nodes[0].remove(entity);
+			}
+			else {
+				// Check if the previously intersecting nodes now fully contain this entity...
+				let containerFound;
+				for(let node of entity.nodes) {
+					if(!containerFound && node.bound.intersects(entity.bound)) {
+						// If any of this entity's nodes can contain this entity, that means the
+						// entity is not intersecting any other nodes and can only be in 1 node
+						if(node.bound.contains(entity.bound))
+							containerFound = node;
+					}
+					// Remove this entity from nodes it is no longer intersecting
+					else
+						node.remove(entity);
+				}
+
+				// ... If they do, there is no need to check for intersections; the entity is fully
+				// contained
+				if(containerFound != undefined) {
+					entity.nodes = [containerFound];
+					continue;
+				}
+			}
+
+			// Recalculate the intersecting nodes for this entity
+			if(entity.nodes.length != 0 && this.recalculateNodes(entity)) continue;
+
+			// If no spatial partitioning solution was found for this entity, add it to the
+			// outOfBounds list
+			this.outOfBounds.push(entity);
+			this.remove(entity);
+		}
+
+		// Update quadtree to collapse nodes
+		this.node.update();
+
+		entities[0].nodes.forEach(s => s.flagged = true);
 	}
 
-	// Add many entities at once
-	load(entities) {
-		this.sector.load(entities);
+	// Used to recalculate the nodes for non-contained entities
+	recalculateNodes(entity) {
+		// Sort nodes by ascending depth to find the highest node
+		entity.nodes.sort((a, b) => a.depth - b.depth);
+		let upwardNode = entity.nodes[0];
+
+		// Travel up the branch of nodes and see if any nodes can contain this entity
+		while(upwardNode.parent !== undefined) {
+			upwardNode = upwardNode.parent;
+
+			// Find a node that is able to contain this entity
+			if(upwardNode.bound.contains(entity.bound)) {
+				// Find all leaf nodes that intersect with the entity
+				entity.nodes = upwardNode.allIntersections(entity);
+
+				// Add this entity to each nodes' list of entities
+				for(let node of entity.nodes)
+					if(node.entities.indexOf(entity) == -1)
+						node.addIntersecting(entity);
+
+				return true;
+			}
+		}
 	}
 
-	// Add a single entity
+	// Add an entity to the quadtree
 	add(entity) {
-		this.sector.add(entity);
+		return this.node.add(entity);
 	}
 
-	remove() {
+	// Remove an entity from the entire quadtree
+	remove(entity) {
+		let index = this.entities.indexOf(entity);
+		if(index != -1) {
+			// Remove from all nodes
+			entity.nodes.forEach(node => node.remove(entity));
+			entity.nodes.length = 0;
 
+			this.entities.splice(index, 1);
+		}
 	}
 
-	// Clear entire quadtree
-	clear() {
-		this.sector = new QuadTreeSector(this, this.bound.minx, this.bound.miny, this.bound.width, this.bound.height);
-	}
-
+	// Debug function
 	identity() {
-		return `quadtree[${this.maxSize}x${this.maxDepth}x${this.sector.allEntities().length}]`;
+		return `quadtree[${this.maxSize}x${this.maxDepth}x${this.entities.length}]`;
 	}
 }
 
@@ -359,32 +398,33 @@ class QuadTreeRenderer {
 
 		ctx.strokeRect(quadtree.bound.minx, quadtree.bound.miny, quadtree.bound.width, quadtree.bound.height);
 
-		// Recursively draw all sectors of this quadtree
-		QuadTreeRenderer.renderSector(ctx, quadtree.sector);
-	}
-
-	static renderSector(ctx, sector) {
-		ctx.lineWidth = 2;
-		ctx.strokeStyle = '#3399ff';
-		ctx.fillStyle = depthColors[sector.depth % (depthColors.length - 1)];
-
-		ctx.beginPath();
-		ctx.rect(sector.bound.minx, sector.bound.miny, sector.bound.width, sector.bound.height);
-		ctx.fill();
-		ctx.stroke();
-
-		// Draw child sectors
-		for(let child of sector.sectors)
-			QuadTreeRenderer.renderSector(ctx, child);
+		// Recursively draw all nodes of this quadtree
+		QuadTreeRenderer.renderNode(ctx, quadtree.node);
 
 		// Draw entities
-		for(let entity of sector.entities) {
+		for(let entity of quadtree.entities) {
 			ctx.fillStyle = 'red';
 			ctx.fillRect(entity.bound.minx, entity.bound.miny, entity.bound.width, entity.bound.height);
 
 			ctx.fillStyle = 'black';
-			ctx.fillText(sector.depth, entity.bound.minx + entity.bound.width / 2, entity.bound.miny);
+			ctx.fillText(entity.nodes.map(a => a.depth).join(','), entity.bound.minx + entity.bound.width / 2, entity.bound.miny);
 		}
+	}
+
+	static renderNode(ctx, node) {
+		ctx.lineWidth = 2;
+		ctx.strokeStyle = '#3399ff';
+		ctx.fillStyle = depthColors[node.depth % (depthColors.length - 1)];
+		ctx.fillStyle = node.flagged ? 'white':depthColors;
+
+		ctx.beginPath();
+		ctx.rect(node.bound.minx, node.bound.miny, node.bound.width, node.bound.height);
+		ctx.fill();
+		ctx.stroke();
+
+		// Draw child nodes
+		for(let child of node.nodes)
+			QuadTreeRenderer.renderNode(ctx, child);
 	}
 }
 
@@ -403,25 +443,33 @@ document.body.append(canvas);
 
 // Create a bunch of random entities
 let entities = [];
-for(let i = 0; i < 1000; i++) {
-	let width = 5 + Math.random() * 5;
-	let height = 5 + Math.random() * 5;
+for(let i = 0; i < 100; i++) {
+	let width = 2 + Math.random() * 8;
+	let height = 2 + Math.random() * 8;
 
-	entities.push(new Entity(Math.random() * (quadtree.bound.width - width - 1), Math.random() * (quadtree.bound.height - height - 1), width, height));
+	let newEntity = new Entity(Math.random() * (quadtree.bound.width - width - 1), Math.random() * (quadtree.bound.height - height - 1), width, height);
+	// if(Math.random() > 0.5) newEntity.bound.static = true;
+	entities.push(newEntity);
 }
+// entities.push(
+// 	new Entity(400, 400, 10, 10),
+// 	new Entity(415, 400, 10, 10),
+// 	new Entity(400, 415, 10, 10),
+// 	new Entity(415, 415, 10, 10));
 
 // Do loading tests
-console.time(`Batch load ${entities.length} entities`);
-quadtree.load(entities);
-console.timeEnd(`Batch load ${entities.length} entities`);
-quadtree.clear();
+// console.time(`Batch load ${entities.length} entities`);
+// quadtree.load(entities);
+// console.timeEnd(`Batch load ${entities.length} entities`);
+// quadtree.clear();
 
 console.time(`Load ${entities.length} entities individually`);
 for(let entity of entities) quadtree.add(entity);
 console.timeEnd(`Load ${entities.length} entities individually`);
 
-// Log quadtree identity
+// Debugging help
 console.log(quadtree.identity());
+// console.log(quadtree.node.mapit());
 
 // Create mouse handlers
 let mouseDown = false;
