@@ -73,6 +73,11 @@ class QuadTreeNode {
 		this.collapse();
 	}
 
+	// Returns all entities that collide with the given boundary
+	query(bound) {
+		return Array.from(new Set(this.allIntersections(bound).flatMap(a => a.entities)));
+	}
+
 	// Bulk load entities into node
 	load() {
 		// TODO: create bulk load function
@@ -104,7 +109,7 @@ class QuadTreeNode {
 
 			// If no child nodes can fully contain the entity, find all nodes that intersect
 			// the entity and add the entity to each
-			let intersections = this.allIntersections(entity);
+			let intersections = this.allIntersections(entity.bound);
 
 			// Must clone array due to side effects in the succeeding loop with .addIntersecting()
 			entity.nodes = Array.from(intersections);
@@ -137,16 +142,16 @@ class QuadTreeNode {
 		if(index != -1) this.entities.splice(index, 1);
 	}
 
-	// Gets every leaf node that intersects with the given entity
-	allIntersections(entity) {
+	// Gets every leaf node that intersects with the given boundary
+	allIntersections(bound) {
 		if(!this.nodes.length)
 			return [this];
 
 		let returnArray = [];
 
 		for(let child of this.nodes) {
-			if(child.bound.intersects(entity.bound))
-				returnArray.push(child.allIntersections(entity));
+			if(child.bound.intersects(bound))
+				returnArray.push(child.allIntersections(bound));
 		}
 
 		return returnArray.flat();
@@ -173,7 +178,7 @@ class QuadTreeNode {
 			// When no child nodes are found, remove node from list and add all
 			// intersecting child nodes
 			entity.nodes.splice(entity.nodes.indexOf(this), 1);
-			let newNodes = this.allIntersections(entity);
+			let newNodes = this.allIntersections(entity.bound);
 			entity.nodes.push(...newNodes);
 
 			// Add entity to all new nodes

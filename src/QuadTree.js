@@ -88,7 +88,7 @@ class QuadTree {
 			// Find a node that is able to contain this entity
 			if(upwardNode.bound.contains(entity.bound)) {
 				// Find all leaf nodes that intersect with the entity
-				entity.nodes = upwardNode.allIntersections(entity);
+				entity.nodes = upwardNode.allIntersections(entity.bound);
 
 				// Add this entity to each nodes' list of entities
 				for(let node of entity.nodes)
@@ -98,6 +98,11 @@ class QuadTree {
 				return true;
 			}
 		}
+	}
+
+	// Find all entities in the given boundary
+	query(bound) {
+		return this.node.query(bound);
 	}
 
 	// Bulk load entities
