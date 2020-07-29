@@ -74,7 +74,7 @@ class QuadTreeNode {
 
 	// Returns all entities that collide with the given boundary
 	query(bound) {
-		return Array.from(new Set(this.allIntersections(bound).flatMap(a => a.entities)));
+		return [...new Set(this.allIntersections(bound).flatMap(a => a.entities))];
 	}
 
 	// Bulk load entities into node
@@ -111,7 +111,7 @@ class QuadTreeNode {
 			let intersections = this.allIntersections(entity.bound);
 
 			// Must clone array due to side effects in the succeeding loop with .addIntersecting()
-			entity.nodes = Array.from(intersections);
+			entity.nodes = [...intersections];
 
 			for(let node of intersections) {
 				node.addIntersecting(entity);
@@ -210,7 +210,7 @@ class QuadTreeNode {
 
 		// If this node can contain all child entities, collapse
 		if(totalEntities.size <= this.root.maxSize) {
-			let nodes = Array.from(this.nodes);
+			let nodes = [...this.nodes];
 			this.nodes.length = 0;
 
 			// Move all child entities to proper locations

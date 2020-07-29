@@ -122,7 +122,7 @@ class QuadTree {
 			let intersections = this.node.allIntersections(entity.bound);
 
 			// Must clone array due to side effects in the succeeding loop with .addIntersecting()
-			entity.nodes = Array.from(intersections);
+			entity.nodes = [...intersections];
 
 			for(let node of intersections)
 				node.addIntersecting(entity);
