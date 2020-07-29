@@ -69,7 +69,6 @@ class QuadTreeNode {
 		// are collapsed properly
 		this.nodes.forEach(child => child.update());
 
-		this.flagged = false;
 		this.collapse();
 	}
 

@@ -27,12 +27,19 @@ class Boundary {
 				&& this.miny < boundary.maxy && this.maxy > boundary.miny;
 	}
 
-	update(x, y, width = this.width, height = this.height) {
+	updateXY(x, y, width = this.width, height = this.height) {
 		if(this.static) throw new Error('Cannot update a static boundary');
 
 		this.minx = x;
 		this.miny = y;
 		this.maxx = x + width;
 		this.maxy = y + height;
+	}
+
+	update(minx, miny, maxx, maxy) {
+		this.minx = minx;
+		this.miny = miny;
+		this.maxx = maxx;
+		this.maxy = maxy;
 	}
 }

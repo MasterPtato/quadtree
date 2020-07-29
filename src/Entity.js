@@ -6,7 +6,7 @@ class Entity {
 	}
 
 	update(x, y) {
-		this.bound.update(x, y);
+		this.bound.updateXY(x, y);
 	}
 
 	// Debugging function

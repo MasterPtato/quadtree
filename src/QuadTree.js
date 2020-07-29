@@ -65,8 +65,8 @@ class QuadTree {
 
 			// If no spatial partitioning solution was found for this entity, add it to the
 			// outOfBounds list
-			this.outOfBounds.push(entity);
 			this.remove(entity);
+			this.outOfBounds.push(entity);
 		}
 
 		// Update quadtree to collapse nodes
@@ -85,8 +85,10 @@ class QuadTree {
 		while(upwardNode.parent !== undefined) {
 			upwardNode = upwardNode.parent;
 
-			// Find a node that is able to contain this entity
-			if(upwardNode.bound.contains(entity.bound)) {
+			// Find a node that is able to contain this entity, or use the top most node for
+			// entities that aren't fully contained by any node of the quadtree
+			if(upwardNode.bound.contains(entity.bound) ||
+			   (upwardNode.depth == 0 && upwardNode.bound.intersects(entity.bound))) {
 				// Find all leaf nodes that intersect with the entity
 				entity.nodes = upwardNode.allIntersections(entity.bound);
 
@@ -107,12 +109,27 @@ class QuadTree {
 
 	// Bulk load entities
 	load(entities) {
-		this.node.load(entities);
+		for(let entity of entities)
+			this.add(entity);
 	}
 
 	// Add an entity to the quadtree
 	add(entity) {
-		return this.node.add(entity);
+		// If this entity cannot be fully contained by the quadtree, check if it at least
+		// intersects the quadtree, then add it to leaf nodes
+		if(this.node.add(entity) && this.node.bound.intersects(entity.bound)) {
+			// Find all intersecting children
+			let intersections = this.node.allIntersections(entity.bound);
+
+			// Must clone array due to side effects in the succeeding loop with .addIntersecting()
+			entity.nodes = Array.from(intersections);
+
+			for(let node of intersections)
+				node.addIntersecting(entity);
+
+			this.entities.push(entity);
+		}
+		else return entity;
 	}
 
 	// Remove an entity from the entire quadtree
@@ -124,6 +141,17 @@ class QuadTree {
 			entity.nodes.length = 0;
 
 			this.entities.splice(index, 1);
+			return;
+		}
+
+		// Remove from out of bounds list
+		index = this.outOfBounds.indexOf(entity);
+		if(index != -1) {
+			// Remove from all nodes
+			entity.nodes.forEach(node => node.remove(entity));
+			entity.nodes.length = 0;
+			
+			this.outOfBounds.splice(index, 1);
 		}
 	}
 
