@@ -117,19 +117,21 @@ class QuadTree {
 	add(entity) {
 		// If this entity cannot be fully contained by the quadtree, check if it at least
 		// intersects the quadtree, then add it to leaf nodes
-		if(this.node.add(entity) && this.node.bound.intersects(entity.bound)) {
-			// Find all intersecting children
-			let intersections = this.node.allIntersections(entity.bound);
+		if(this.node.add(entity)) {
+			if(this.node.bound.intersects(entity.bound)) {
+				// Find all intersecting children
+				let intersections = this.node.allIntersections(entity.bound);
 
-			// Must clone array due to side effects in the succeeding loop with .addIntersecting()
-			entity.nodes = [...intersections];
+				// Must clone array due to side effects in the succeeding loop with .addIntersecting()
+				entity.nodes = [...intersections];
 
-			for(let node of intersections)
-				node.addIntersecting(entity);
+				for(let node of intersections)
+					node.addIntersecting(entity);
 
-			this.entities.push(entity);
+				this.entities.push(entity);
+			}
+			else return entity;
 		}
-		else return entity;
 	}
 
 	// Remove an entity from the entire quadtree

@@ -136,7 +136,6 @@ class QuadTreeNode {
 
 	// Remove an entity from this node
 	remove(entity) {
-		let test = this.entities.length;
 		let index = this.entities.indexOf(entity);
 		if(index != -1) this.entities.splice(index, 1);
 	}
